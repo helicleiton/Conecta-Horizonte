@@ -1,27 +1,52 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Service } from './types';
-import { INITIAL_SERVICES, CATEGORIES, BAIRROS } from './constants';
+import { CATEGORIES, BAIRROS } from './constants';
 import ServiceCard from './components/ServiceCard';
 import AddServiceModal from './components/AddServiceModal';
 import MultiSelectDropdown from './components/MultiSelectDropdown';
 import { PlusIcon, SearchIcon } from './components/icons';
+import { db } from './firebaseConfig';
+import { collection, addDoc, query, onSnapshot, orderBy } from "firebase/firestore";
 
 const App: React.FC = () => {
-  const [services, setServices] = useState<Service[]>(INITIAL_SERVICES);
+  const [services, setServices] = useState<Service[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['Todos']);
   const [selectedBairros, setSelectedBairros] = useState<string[]>(['Todos']);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const handleAddService = (newServiceData: Omit<Service, 'id' | 'imageUrl'>) => {
-    const newService: Service = {
-      ...newServiceData,
-      id: new Date().getTime().toString(),
-      // Use a random image from picsum for new services
-      imageUrl: `https://picsum.photos/seed/${Math.random()}/400/300`,
-    };
-    setServices(prevServices => [newService, ...prevServices]);
-    setIsModalOpen(false); // Close modal after adding
+  useEffect(() => {
+    const q = query(collection(db, "services"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const servicesData: Service[] = [];
+      querySnapshot.forEach((doc) => {
+        servicesData.push({ id: doc.id, ...doc.data() } as Service);
+      });
+      setServices(servicesData);
+      setIsLoading(false);
+    }, (error) => {
+        console.error("Erro ao buscar serviços: ", error);
+        setIsLoading(false);
+    });
+
+    // Limpa o listener ao desmontar o componente
+    return () => unsubscribe();
+  }, []);
+
+
+  const handleAddService = async (newServiceData: Omit<Service, 'id' | 'imageUrl'>) => {
+    try {
+        await addDoc(collection(db, "services"), {
+            ...newServiceData,
+            imageUrl: `https://picsum.photos/seed/${Math.random()}/400/300`,
+            createdAt: new Date()
+        });
+        setIsModalOpen(false); // Close modal after adding
+    } catch (e) {
+        console.error("Erro ao adicionar serviço: ", e);
+        alert("Ocorreu um erro ao publicar seu serviço. Tente novamente.");
+    }
   };
 
   const filteredServices = useMemo(() => {
@@ -39,6 +64,33 @@ const App: React.FC = () => {
       return searchTermMatch && categoryMatch && bairroMatch;
     });
   }, [services, searchTerm, selectedCategories, selectedBairros]);
+
+  const renderContent = () => {
+    if (isLoading) {
+      return (
+        <div className="text-center py-16">
+          <p className="text-2xl font-semibold text-gray-700">Carregando serviços...</p>
+        </div>
+      );
+    }
+
+    if (filteredServices.length > 0) {
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+          {filteredServices.map(service => (
+            <ServiceCard key={service.id} service={service} />
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="text-center py-16 bg-white rounded-lg shadow-md">
+        <p className="text-2xl font-semibold text-gray-700">Nenhum serviço encontrado</p>
+        <p className="text-gray-500 mt-2">Tente ajustar seus filtros ou clique em "Anunciar Serviço" para ser o primeiro!</p>
+      </div>
+    );
+  };
 
   return (
     <div className="bg-gray-50 min-h-screen font-sans">
@@ -86,18 +138,8 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {filteredServices.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            {filteredServices.map(service => (
-              <ServiceCard key={service.id} service={service} />
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-16 bg-white rounded-lg shadow-md">
-            <p className="text-2xl font-semibold text-gray-700">Nenhum serviço encontrado</p>
-            <p className="text-gray-500 mt-2">Tente ajustar seus filtros ou clique em "Anunciar Serviço" para adicionar um.</p>
-          </div>
-        )}
+        {renderContent()}
+
       </main>
 
       <AddServiceModal
